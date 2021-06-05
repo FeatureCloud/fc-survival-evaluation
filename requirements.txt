@@ -1,11 +1,16 @@
-bottle
-numpy
+bottle # webserver
+jsonpickle # to send complex datatypes
+numpy # for mathematical computations
+pyyaml # to read config file
+
 scikit-learn
 matplotlib
-pandas
-pyyaml
 jsonpickle
 plotly
 psutil
 requests
 kaleido
+pandas
+nptyping
+scipy
+sklearn
