@@ -42,11 +42,11 @@ class AppLogic:
         self.OUTPUT_DIR = "/mnt/output"
 
         self.y_test_filename = None
-        self.y_proba_filename = None
+        self.y_pred_filename = None
 
         self.sep = ","
-        self.split_mode = None
-        self.split_dir = "."
+        self.mode = None
+        self.dir = "."
         self.splits = {}
         self.pred_errors = {}
         self.global_errors = {}
@@ -70,14 +70,21 @@ class AppLogic:
 
     def read_config(self):
         with open(self.INPUT_DIR + '/config.yml') as f:
-            config = yaml.load(f, Loader=yaml.FullLoader)['fc_regression_evaluation']
-            self.y_test_filename = config['input']['y_true']
-            self.y_proba_filename = config['input']['y_pred']
-            self.split_mode = config['split']['mode']
-            self.split_dir = config['split']['dir']
+            config = yaml.load(f, Loader=yaml.FullLoader)['fc_survival_evaluation']
+            self.y_test_filename = config['input']['y_test']
+            self.y_pred_filename = config['input']['y_pred']
 
-        if self.split_mode == "directory":
-            self.splits = dict.fromkeys([f.path for f in os.scandir(f'{self.INPUT_DIR}/{self.split_dir}') if f.is_dir()])
+            self.sep = config['format']['sep']
+            self.label_time_to_event = config["format"]["label_survival_time"]
+            self.label_event = config["format"]["label_event"]
+            self.label_pred_time_to_event = config["format"]["label_predicted_time"]
+            self.event_truth_value = config["format"].get("event_truth_value", True)  # default value
+
+            self.mode = config['split']['mode']
+            self.dir = config['split']['dir']
+
+        if self.mode == "directory":
+            self.splits = dict.fromkeys([f.path for f in os.scandir(f'{self.INPUT_DIR}/{self.dir}') if f.is_dir()])
         else:
             self.splits[self.INPUT_DIR] = None
 
@@ -132,10 +139,10 @@ class AppLogic:
                     else:
                         y_test = pickle.load(y_test_path)
 
-                    y_pred_path = split + "/" + self.y_proba_filename
-                    if self.y_proba_filename.endswith(".csv"):
+                    y_pred_path = split + "/" + self.y_pred_filename
+                    if self.y_pred_filename.endswith(".csv"):
                         y_proba = pd.read_csv(y_pred_path, sep=",")
-                    elif self.y_proba_filename.endswith(".tsv"):
+                    elif self.y_pred_filename.endswith(".tsv"):
                         y_proba = pd.read_csv(y_pred_path, sep="\t")
                     else:
                         y_proba = pickle.load(y_pred_path)
