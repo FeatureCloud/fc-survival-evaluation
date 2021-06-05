@@ -29,8 +29,8 @@ Use the config file to customize the evaluation. Just upload it together with yo
 ```yaml
 fc_survival_evaluation:
   input:
-    y_test: "pred.csv"
-    y_pred: "pred.csv"
+    y_test: "test.csv"
+    y_pred: "pred.csv"  # could be the same as y_test if predictions were appended to test data
   format:
     sep: ","
     label_survival_time: "tte"
