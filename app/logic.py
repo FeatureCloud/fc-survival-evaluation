@@ -261,6 +261,7 @@ class AppLogic:
                     state = state_writing_results
 
             if state == state_writing_results:
+                self.progress = 'writing results...'
                 logging.debug(self.global_results)
 
                 for split, evaluation in self.global_results.items():
