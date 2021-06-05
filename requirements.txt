@@ -1,0 +1,11 @@
+bottle
+numpy
+scikit-learn
+matplotlib
+pandas
+pyyaml
+jsonpickle
+plotly
+psutil
+requests
+kaleido
