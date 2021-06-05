@@ -1,15 +1,19 @@
+import logging
 import os
-import pickle
 import shutil
 import threading
 import time
+from collections import defaultdict
+from typing import Tuple, Any, Dict, List
 
 import jsonpickle
+import numpy as np
 import pandas as pd
 import yaml
+from nptyping import NDArray, Bool
 
-from app.algo import check, create_score_df, aggregate_prediction_errors, compute_local_prediction_error, \
-    create_cv_accumulation, plot_boxplots
+from app.algo import LocalConcordanceIndex, calculate_cindex_on_local_data, GlobalConcordanceIndexEvaluations, \
+    AggregatedConcordanceIndex
 
 
 class AppLogic:
@@ -47,11 +51,17 @@ class AppLogic:
         self.sep = ","
         self.mode = None
         self.dir = "."
-        self.splits = {}
-        self.pred_errors = {}
-        self.global_errors = {}
-        self.score_dfs = {}
-        self.cv_averages = None
+
+        self.label_time_to_event = None
+        self.label_event = None
+        self.label_pred_time_to_event = None
+        self.event_truth_value = None
+
+        self.actual: Dict[str, NDArray] = {}
+        self.predicted: Dict[str, NDArray] = {}
+
+        self.local_evaluations: Dict[str, LocalConcordanceIndex] = {}
+        self.global_results: Dict[str, AggregatedConcordanceIndex] = {}
 
     def handle_setup(self, client_id, coordinator, clients):
         # This method is called once upon startup and contains information about the execution context of this instance
@@ -63,10 +73,18 @@ class AppLogic:
         self.thread = threading.Thread(target=self.app_flow)
         self.thread.start()
 
-    def handle_incoming(self, data):
+    def handle_incoming(self, data_read):
         # This method is called when new data arrives
-        print("Process incoming data....")
-        self.data_incoming.append(data.read())
+        logging.debug("Process incoming data....")
+        data_read = data_read.read()
+        logging.debug(f"Add data to incoming: {data_read}")
+        self.data_incoming.append(data_read)
+
+    def handle_outgoing(self):
+        logging.debug("Process outgoing data...")
+        # This method is called when data is requested
+        self.status_available = False
+        return self.data_outgoing
 
     def read_config(self):
         with open(self.INPUT_DIR + '/config.yml') as f:
@@ -80,24 +98,66 @@ class AppLogic:
             self.label_pred_time_to_event = config["format"]["label_predicted_time"]
             self.event_truth_value = config["format"].get("event_truth_value", True)  # default value
 
+            self.objective = config["parameters"]["objective"]
+            possible_objectives = ['ranking', 'regression']
+            if self.objective not in possible_objectives:
+                raise ValueError(f"Unknown objective. Choose one of {', '.join(possible_objectives)}")
+
             self.mode = config['split']['mode']
             self.dir = config['split']['dir']
 
         if self.mode == "directory":
-            self.splits = dict.fromkeys([f.path for f in os.scandir(f'{self.INPUT_DIR}/{self.dir}') if f.is_dir()])
+            self.actual = dict.fromkeys([f.path for f in os.scandir(f'{self.INPUT_DIR}/{self.dir}') if f.is_dir()])
+            self.predicted = dict.fromkeys(self.actual)
         else:
-            self.splits[self.INPUT_DIR] = None
+            self.actual[self.INPUT_DIR] = None
+            self.predicted[self.INPUT_DIR] = None
 
-        for split in self.splits.keys():
+        for split in self.actual.keys():
             os.makedirs(split.replace("/input/", "/output/"), exist_ok=True)
         shutil.copyfile(self.INPUT_DIR + '/config.yml', self.OUTPUT_DIR + '/config.yml')
         print(f'Read config file.', flush=True)
 
-    def handle_outgoing(self):
-        print("Process outgoing data...")
-        # This method is called when data is requested
-        self.status_available = False
-        return self.data_outgoing
+    @staticmethod
+    def get_column(dataframe: pd.DataFrame, col_name: str) -> pd.Series:
+        try:
+            return dataframe[col_name]
+        except KeyError as e:
+            logging.error(f"Column {col_name} does not exist in the data")
+            raise e
+
+    @staticmethod
+    def event_value_to_truth_array(event: NDArray[Any], truth_value: Any) -> NDArray[Bool]:
+        if truth_value is True and event.dtype == np.dtype('bool'):  # nothing to do...
+            return event
+
+        truth_array = (event == truth_value)
+        return truth_array
+
+    def read_data_frame(self, path):
+        logging.info(f"Read data file at {path}")
+        dataframe = pd.read_csv(path, sep=self.sep)
+        logging.debug(f"Dataframe:\n{dataframe}")
+        return dataframe
+
+    def read_survival_data(self, path) -> Tuple[pd.DataFrame, NDArray]:
+        X: pd.DataFrame = self.read_data_frame(path)
+
+        event = self.get_column(X, self.label_event)
+        logging.debug(f"event:\n{event}")
+        event_occurred = self.event_value_to_truth_array(event.to_numpy(), self.event_truth_value)
+        logging.debug(f"event_occurred:\n{event_occurred}")
+
+        time_to_event = self.get_column(X, self.label_time_to_event)
+        logging.debug(f"time_to_event:\n{time_to_event}")
+
+        X.drop([self.label_event, self.label_time_to_event], axis=1, inplace=True)
+        logging.debug(f"features:\n{X}")
+        y = np.zeros(X.shape[0], dtype=[('Status', '?'), ('Survival', '<f8')])  # TODO
+        y['Status'] = event
+        y['Survival'] = time_to_event
+
+        return [X, y]
 
     def app_flow(self):
         # This method contains a state machine for the client and coordinator instance
@@ -105,12 +165,11 @@ class AppLogic:
         # === States ===
         state_initializing = 1
         state_read_input = 2
-        state_preprocess = 3
-        state_aggregate_prediction_errors = 4
-        state_wait_for_prediction_errors = 5
-        state_compute_scores = 6
-        state_writing_results = 7
-        state_finishing = 8
+        state_local_evaluation = 3
+        state_aggregation_of_evaluation = 4
+        state_waiting_for_evaluation = 5
+        state_writing_results = 6
+        state_shutdown = 7
 
         # Initial state
         state = state_initializing
@@ -130,118 +189,97 @@ class AppLogic:
                 print('[CLIENT] Read input and config')
                 self.read_config()
 
-                for split in self.splits.keys():
-                    y_test_path = split + "/" + self.y_test_filename
-                    if self.y_test_filename.endswith(".csv"):
-                        y_test = pd.read_csv(y_test_path, sep=",")
-                    elif self.y_test_filename.endswith(".tsv"):
-                        y_test = pd.read_csv(y_test_path, sep="\t")
-                    else:
-                        y_test = pickle.load(y_test_path)
+                for split in self.actual.keys():
+                    _, y = self.read_survival_data(os.path.join(split, self.y_test_filename))
+                    self.actual[split] = y
 
-                    y_pred_path = split + "/" + self.y_pred_filename
-                    if self.y_pred_filename.endswith(".csv"):
-                        y_proba = pd.read_csv(y_pred_path, sep=",")
-                    elif self.y_pred_filename.endswith(".tsv"):
-                        y_proba = pd.read_csv(y_pred_path, sep="\t")
-                    else:
-                        y_proba = pickle.load(y_pred_path)
-                    y_test, y_pred = check(y_test, y_proba)
-                    self.splits[split] = [y_test, y_pred]
-                state = state_preprocess
+                    predictions_csv_df: pd.DataFrame = self.read_data_frame(os.path.join(split, self.y_pred_filename))
+                    self.predicted[split] = predictions_csv_df[self.label_pred_time_to_event].to_numpy()
+                    logging.debug(f"Predictions: {self.predicted[split]}")
+                state = state_local_evaluation
 
-            if state == state_preprocess:
-                for split in self.splits.keys():
-                    y_test = self.splits[split][0]
-                    y_pred = self.splits[split][1]
-                    self.pred_errors[split] = compute_local_prediction_error(y_test, y_pred)
+            if state == state_local_evaluation:
+                self.progress = f'local evaluation...'
+                self.local_evaluations: Dict[str, LocalConcordanceIndex] = dict.fromkeys(self.actual)
+                for split in self.actual.keys():
+                    event_indicator = self.actual[split]['Status']
+                    event_time = self.actual[split]['Survival']
 
-                data_to_send = jsonpickle.encode(self.pred_errors)
+                    estimate = self.predicted[split]
+                    if self.objective == 'regression':
+                        estimate = -estimate
+
+                    self.local_evaluations[split] = calculate_cindex_on_local_data(event_indicator, event_time, estimate)
+                logging.debug(self.local_evaluations)
+
+                data_to_send = jsonpickle.encode(self.local_evaluations)
 
                 if self.coordinator:
                     self.data_incoming.append(data_to_send)
-                    state = state_aggregate_prediction_errors
+                    state = state_aggregation_of_evaluation
+                    logging.debug(f'[CONTROLLER] Adding EVALUATION data locally')
                 else:
                     self.data_outgoing = data_to_send
                     self.status_available = True
-                    state = state_wait_for_prediction_errors
-                    print(f'[CLIENT] Sending computation data to coordinator', flush=True)
+                    state = state_waiting_for_evaluation
+                    logging.debug(f'[CLIENT] Sending EVALUATION data to coordinator')
 
-            if state == state_wait_for_prediction_errors:
-                print("[CLIENT] Wait for prediction errors")
-                self.progress = 'wait for prediction_errors'
-                if len(self.data_incoming) > 0:
-                    print("[CLIENT] Received aggregated prediction_errors from coordinator.")
-                    self.global_errors = jsonpickle.decode(self.data_incoming[0])
-                    self.data_incoming = []
-
-                    state = state_compute_scores
-
-            if state == state_compute_scores:
-                maes = []
-                maxs = []
-                rmses = []
-                mses = []
-                medaes = []
-
-                for split in self.splits.keys():
-                    self.score_dfs[split], data = create_score_df(self.global_errors[split])
-                    maes.append(data[0])
-                    maxs.append(data[1])
-                    rmses.append(data[2])
-                    mses.append(data[3])
-                    medaes.append(data[4])
-                if len(self.splits.keys()) > 1:
-                    self.cv_averages = create_cv_accumulation(maes, maxs, rmses, mses, medaes)
-
-                state = state_writing_results
-
-            if state == state_writing_results:
-                print('[CLIENT] Save results')
-                for split in self.splits.keys():
-                    self.score_dfs[split].to_csv(split.replace("/input/", "/output/") + "/scores.csv", index=False)
-
-                if len(self.splits.keys()) > 1:
-                    self.cv_averages.to_csv(self.OUTPUT_DIR + "/cv_evaluation.csv", index=False)
-
-                    plt = plot_boxplots(self.cv_averages, title=f'{len(self.splits.keys())}-fold Cross Validation' )
-                    plt.write_image(f'{self.OUTPUT_DIR}/boxplot.png', format="png", engine="kaleido")
-                    plt.write_image(f'{self.OUTPUT_DIR}/boxplot.svg', format="svg", engine="kaleido")
-                    plt.write_image(f'{self.OUTPUT_DIR}/boxplot.pdf', format="pdf", engine="kaleido")
-
-                if self.coordinator:
-                    self.data_incoming = ['DONE']
-                    state = state_finishing
-                else:
-                    self.data_outgoing = 'DONE'
-                    self.status_available = True
-                    break
-
-            if state == state_finishing:
-                print("Finishing", flush=True)
-                self.progress = 'finishing...'
+            if state == state_aggregation_of_evaluation:
+                self.progress = f'waiting for evaluation results. {len(self.data_incoming)} of {len(self.clients)}...'
+                logging.debug(self.progress)
                 if len(self.data_incoming) == len(self.clients):
-                    self.status_finished = True
-                    break
-
-            # GLOBAL AGGREGATIONS
-
-            if state == state_aggregate_prediction_errors:
-                print("[CLIENT] Aggregate prediction errors")
-                self.progress = 'computing...'
-                if len(self.data_incoming) == len(self.clients):
-                    data = [jsonpickle.decode(client_data) for client_data in self.data_incoming]
+                    self.progress = f'aggregate local evaluations...'
+                    logging.debug("Received data attributes of all clients")
+                    results: List[Dict[str, LocalConcordanceIndex]] = [jsonpickle.decode(client_data) for client_data in
+                                                                       self.data_incoming]
                     self.data_incoming = []
-                    for split in self.splits.keys():
-                        split_data = []
-                        for client in data:
-                            split_data.append(client[split])
-                        self.global_errors[split] = aggregate_prediction_errors(split_data)
-                    data_to_broadcast = jsonpickle.encode(self.pred_errors)
+                    logging.debug(results)
+
+                    # unwrap
+                    local_results: Dict[str, List[LocalConcordanceIndex]] = defaultdict(list)
+                    for res_dict in results:
+                        for split, evaluation in res_dict.items():
+                            local_results[split].append(evaluation)
+
+                    self.global_results = dict.fromkeys(self.actual)
+                    for split, evaluations in local_results.items():
+                        aggregator = GlobalConcordanceIndexEvaluations(evaluations)
+                        self.global_results[split] = aggregator.calc()
+
+                    data_to_broadcast = jsonpickle.encode(self.global_results)
                     self.data_outgoing = data_to_broadcast
                     self.status_available = True
-                    state = state_compute_scores
-                    print(f'[CLIENT] Broadcasting aggregated prediction errors to clients', flush=True)
+                    state = state_writing_results
+                    print(f'[CLIENT] Broadcasting EVALUATION data to clients', flush=True)
+
+            if state == state_waiting_for_evaluation:
+                self.progress = 'wait for aggregation...'
+                logging.debug(self.progress)
+                if len(self.data_incoming) > 0:
+                    logging.info("[CLIENT] Received EVALUATION aggregation data from coordinator.")
+                    self.global_results = jsonpickle.decode(self.data_incoming[0])
+                    state = state_writing_results
+
+            if state == state_writing_results:
+                logging.debug(self.global_results)
+
+                for split, evaluation in self.global_results.items():
+                    output_path = os.path.join(split.replace("/input", "/output"), "scores.tab")
+                    logging.debug(f"Write output for {split} to {output_path}")
+                    with open(output_path, "w") as fh:
+                        fh.write(f"c-index on local data\t{self.local_evaluations[split].cindex}\n")
+                        fh.write(f"concordant pairs on local data\t{self.local_evaluations[split].num_concordant_pairs}\n")
+                        aggregated: AggregatedConcordanceIndex = self.global_results[split]
+                        fh.write(f"mean c-index\t{aggregated.mean_cindex}\n")
+                        fh.write(f"weighted c-index\t{aggregated.weighted_cindex}\n")
+
+                state = state_shutdown
+
+            if state == state_shutdown:
+                self.progress = "finished"
+                logging.info("Finished")
+                self.status_finished = True
+                break
 
             time.sleep(1)
 

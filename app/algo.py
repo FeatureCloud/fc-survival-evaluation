@@ -1,101 +1,81 @@
+from dataclasses import dataclass
+from typing import List
+
 import numpy as np
-import pandas as pd
-import plotly.graph_objects as go
+import sksurv.metrics
 
 
-def check(y_test, y_proba):
-    if isinstance(y_test, pd.DataFrame):
-        y_test = y_test.to_numpy().ravel()
-    if isinstance(y_proba, pd.DataFrame):
-        y_proba = y_proba.to_numpy().ravel()
-
-    try:
-        if y_proba.shape[1] == 2:
-            y_proba = y_proba[:, 1]
-    except IndexError:
-        pass
-
-    return y_test, y_proba
+class Result:
+    pass
 
 
-def compute_local_prediction_error(actual, pred):
-    pred_errors = []
-    for i in range(len(actual)):
-        pred_errors.append(pred[i] - actual[i])
-
-    return pred_errors
+@dataclass
+class AggregatedConcordanceIndex(Result):
+    mean_cindex: float
+    weighted_cindex: float
 
 
-def aggregate_prediction_errors(local_results):
-    return np.concatenate(local_results)
+class Evaluation:
+    pass
 
 
-def mae(pred_errors):
-    sum_error = 0.0
-    for i in range(len(pred_errors)):
-        sum_error += abs(pred_errors[i])
-    return sum_error / float(len(pred_errors))
+@dataclass
+class LocalConcordanceIndex(Evaluation):
+    cindex: float
+    num_concordant_pairs: int
 
 
-def max_error(pred_errors):
-    absolut = [abs(ele) for ele in pred_errors]
-    return np.max(absolut)
+def calculate_cindex_on_local_data(event_indicator, event_time, estimate, tied_tol=1e-8) -> LocalConcordanceIndex:
+    cindex, concordant, discordant, tied_risk, tied_time = sksurv.metrics.concordance_index_censored(event_indicator,
+                                                                                                     event_time,
+                                                                                                     estimate,
+                                                                                                     tied_tol=tied_tol)
+    return LocalConcordanceIndex(
+        cindex=cindex,
+        num_concordant_pairs=concordant,
+    )
 
 
-def rmse(pred_errors):
-    sum_error = 0.0
-    for i in range(len(pred_errors)):
-        sum_error += (pred_errors[i] ** 2)
-    mean_error = sum_error / float(len(pred_errors))
-    return np.sqrt(mean_error)
+class GlobalConcordanceIndexEvaluations(object):
+    def __init__(self, evaluations: List[LocalConcordanceIndex]):
+        self.c_indices = np.zeros(len(evaluations))
+        self.concordant_pairs = np.zeros(len(evaluations))
+        for i, evaluation in enumerate(evaluations):
+            self.c_indices[i] = evaluation.cindex
+            self.concordant_pairs[i] = evaluation.num_concordant_pairs
 
+    def mean_cindex(self) -> float:
+        r"""Calculate the mean concordance index.
 
-def mse(pred_errors):
-    sum_error = 0.0
-    for i in range(len(pred_errors)):
-        sum_error += (pred_errors[i] ** 2)
-    mean_error = sum_error / float(len(pred_errors))
-    return mean_error
+        .. math::
+            C_{global\_mean} = \frac{\sum_{k}^{n\_clients} C_k}{n\_clients}
 
+        Reference
+        ---------
+        Remus, S. L. (2021). Implementation of a federated Random Survival Forest Feature Cloud app (Bachelor's thesis).
 
-def medae(pred_errors):
-    absolut = [abs(ele) for ele in pred_errors]
-    return np.median(absolut)
+        :return: mean concordance index
+        :rtype: float
+        """
+        return self.c_indices.mean()
 
+    def weighted_cindex(self) -> float:
+        r"""Calculate the weighted concordance index.
 
-def create_score_df(pred_errors):
-    mae_score = mae(pred_errors)
-    max_score = max_error(pred_errors)
-    rmse_score = rmse(pred_errors)
-    mse_score = mse(pred_errors)
-    medae_score = medae(pred_errors)
+        .. math::
+            C_{global\_weighted} = \frac{\sum_{k}^{n\_clients} C_k * CP_k}{\sum_{k}^{n\_clients} CP_k}
 
-    scores = ["mean_absolut_error", "max_error", "root_mean_squared_error", "mean_squared_error",
-              "median_absolut_error"]
-    data = [mae_score, max_score, rmse_score, mse_score, medae_score]
+        Reference
+        ---------
+        Remus, S. L. (2021). Implementation of a federated Random Survival Forest Feature Cloud app (Bachelor's thesis).
 
-    df = pd.DataFrame(list(zip(scores, data)), columns=["metric", "score"])
+        :return: weighted concordance index
+        :rtype: float
+        """
+        return np.sum(self.c_indices * self.concordant_pairs) / np.sum(self.concordant_pairs)
 
-    return df, data
-
-
-def create_cv_accumulation(maes, maxs, rmses, mses, medaes):
-    scores = [maes, maxs, rmses, mses, medaes]
-    cols = ["mean_absolut_error", "max_error", "root_mean_squared_error", "mean_squared_error",
-            "median_absolut_error"]
-
-    df = pd.DataFrame(data=scores).transpose()
-    df.columns = cols
-
-    return df
-
-def plot_boxplots(df, title):
-    fig = go.Figure()
-    fig.add_trace(go.Box(y=df["mean_absolut_error"].map(np.log2), quartilemethod="linear", name="Mean Absolute Error"))
-    fig.add_trace(go.Box(y=df["max_error"].map(np.log2), quartilemethod="linear", name="Max Error"))
-    fig.add_trace(go.Box(y=df["root_mean_squared_error"].map(np.log2), quartilemethod="linear", name="Root Mean Squared Error"))
-    #fig.add_trace(go.Box(y=df["mean_squared_error"].map(np.log2), quartilemethod="linear", name="f1-score"))
-    fig.add_trace(go.Box(y=df["median_absolut_error"].map(np.log2), quartilemethod="linear", name="Median Absolut Error"))
-    fig.update_layout(title=title, yaxis_title='Log2')
-
-    return fig
+    def calc(self) -> AggregatedConcordanceIndex:
+        return AggregatedConcordanceIndex(
+            mean_cindex=self.mean_cindex(),
+            weighted_cindex=self.weighted_cindex(),
+        )
