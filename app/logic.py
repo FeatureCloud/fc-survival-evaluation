@@ -4,7 +4,7 @@ import shutil
 import threading
 import time
 from collections import defaultdict
-from typing import Tuple, Any, Dict, List
+from typing import Tuple, Any, Dict, List, Optional
 
 import jsonpickle
 import numpy as np
@@ -14,6 +14,8 @@ from nptyping import NDArray, Bool
 
 from app.algo import LocalConcordanceIndex, calculate_cindex_on_local_data, GlobalConcordanceIndexEvaluations, \
     AggregatedConcordanceIndex
+
+MINIMUM_CONCORDANT_PAIRS = 3
 
 
 class AppLogic:
@@ -31,6 +33,9 @@ class AppLogic:
         self.id = None
         self.coordinator = None
         self.clients = None
+
+        # === Privacy ===
+        self.min_concordant_pairs = None
 
         # === Data ===
         self.data_incoming = []
@@ -89,6 +94,8 @@ class AppLogic:
     def read_config(self):
         with open(self.INPUT_DIR + '/config.yml') as f:
             config = yaml.load(f, Loader=yaml.FullLoader)['fc_survival_evaluation']
+            self.min_concordant_pairs = max(config['privacy']['min_concordant_pairs'], MINIMUM_CONCORDANT_PAIRS)
+
             self.y_test_filename = config['input']['y_test']
             self.y_pred_filename = config['input']['y_pred']
 
@@ -200,7 +207,7 @@ class AppLogic:
 
             if state == state_local_evaluation:
                 self.progress = f'local evaluation...'
-                self.local_evaluations: Dict[str, LocalConcordanceIndex] = dict.fromkeys(self.actual)
+                self.local_evaluations: Dict[str, Optional[LocalConcordanceIndex]] = dict.fromkeys(self.actual)
                 for split in self.actual.keys():
                     event_indicator = self.actual[split]['Status']
                     event_time = self.actual[split]['Survival']
@@ -209,7 +216,13 @@ class AppLogic:
                     if self.objective == 'regression':
                         estimate = -estimate
 
-                    self.local_evaluations[split] = calculate_cindex_on_local_data(event_indicator, event_time, estimate)
+                    local_result = calculate_cindex_on_local_data(event_indicator, event_time, estimate)
+                    if local_result.num_concordant_pairs < self.min_concordant_pairs:
+                        logging.debug(f'Opt-out')
+                        self.local_evaluations[split] = None
+                    else:
+                        self.local_evaluations[split] = local_result
+
                 logging.debug(self.local_evaluations)
 
                 data_to_send = jsonpickle.encode(self.local_evaluations)
@@ -230,8 +243,8 @@ class AppLogic:
                 if len(self.data_incoming) == len(self.clients):
                     self.progress = f'aggregate local evaluations...'
                     logging.debug("Received data attributes of all clients")
-                    results: List[Dict[str, LocalConcordanceIndex]] = [jsonpickle.decode(client_data) for client_data in
-                                                                       self.data_incoming]
+                    results: List[Dict[str, Optional[LocalConcordanceIndex]]] = [jsonpickle.decode(client_data) for
+                                                                                 client_data in self.data_incoming]
                     self.data_incoming = []
                     logging.debug(results)
 
@@ -239,7 +252,8 @@ class AppLogic:
                     local_results: Dict[str, List[LocalConcordanceIndex]] = defaultdict(list)
                     for res_dict in results:
                         for split, evaluation in res_dict.items():
-                            local_results[split].append(evaluation)
+                            if evaluation is not None:
+                                local_results[split].append(evaluation)
 
                     self.global_results = dict.fromkeys(self.actual)
                     for split, evaluations in local_results.items():
@@ -270,9 +284,10 @@ class AppLogic:
                     with open(output_path, "w") as fh:
                         fh.write(f"c-index on local data\t{self.local_evaluations[split].cindex}\n")
                         fh.write(f"concordant pairs on local data\t{self.local_evaluations[split].num_concordant_pairs}\n")
-                        aggregated: AggregatedConcordanceIndex = evaluation
-                        fh.write(f"mean c-index\t{aggregated.mean_cindex}\n")
-                        fh.write(f"weighted c-index\t{aggregated.weighted_cindex}\n")
+                        aggregated: Optional[AggregatedConcordanceIndex] = evaluation
+                        if aggregated is not None:
+                            fh.write(f"mean c-index\t{aggregated.mean_cindex}\n")
+                            fh.write(f"weighted c-index\t{aggregated.weighted_cindex}\n")
 
                 state = state_shutdown
 
