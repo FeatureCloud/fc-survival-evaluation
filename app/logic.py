@@ -270,7 +270,7 @@ class AppLogic:
                     with open(output_path, "w") as fh:
                         fh.write(f"c-index on local data\t{self.local_evaluations[split].cindex}\n")
                         fh.write(f"concordant pairs on local data\t{self.local_evaluations[split].num_concordant_pairs}\n")
-                        aggregated: AggregatedConcordanceIndex = self.global_results[split]
+                        aggregated: AggregatedConcordanceIndex = evaluation
                         fh.write(f"mean c-index\t{aggregated.mean_cindex}\n")
                         fh.write(f"weighted c-index\t{aggregated.weighted_cindex}\n")
 
