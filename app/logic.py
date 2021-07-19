@@ -207,7 +207,8 @@ class AppLogic:
 
             if state == state_local_evaluation:
                 self.progress = f'local evaluation...'
-                self.local_evaluations: Dict[str, Optional[LocalConcordanceIndex]] = dict.fromkeys(self.actual)
+                self.local_evaluations: Dict[str, LocalConcordanceIndex] = dict.fromkeys(self.actual)
+                self.public_local_evaluations: Dict[str, Optional[LocalConcordanceIndex]] = dict.fromkeys(self.actual)
                 for split in self.actual.keys():
                     event_indicator = self.actual[split]['Status']
                     event_time = self.actual[split]['Survival']
@@ -217,15 +218,16 @@ class AppLogic:
                         estimate = -estimate
 
                     local_result = calculate_cindex_on_local_data(event_indicator, event_time, estimate)
+                    self.local_evaluations[split] = local_result
                     if local_result.num_concordant_pairs < self.min_concordant_pairs:
                         logging.debug(f'Opt-out')
-                        self.local_evaluations[split] = None
+                        self.public_local_evaluations[split] = None
                     else:
-                        self.local_evaluations[split] = local_result
+                        self.public_local_evaluations[split] = local_result
 
                 logging.debug(self.local_evaluations)
 
-                data_to_send = jsonpickle.encode(self.local_evaluations)
+                data_to_send = jsonpickle.encode(self.public_local_evaluations)
 
                 if self.coordinator:
                     self.data_incoming.append(data_to_send)
@@ -282,8 +284,11 @@ class AppLogic:
                     output_path = os.path.join(split.replace("/input", "/output"), "scores.tab")
                     logging.debug(f"Write output for {split} to {output_path}")
                     with open(output_path, "w") as fh:
-                        fh.write(f"c-index on local data\t{self.local_evaluations[split].cindex}\n")
-                        fh.write(f"concordant pairs on local data\t{self.local_evaluations[split].num_concordant_pairs}\n")
+                        local: LocalConcordanceIndex = self.local_evaluations[split]
+                        fh.write(f"c-index on local data\t{local.cindex}\n")
+                        fh.write(f"concordant pairs on local data\t{local.num_concordant_pairs}\n")
+                        public_local: Optional[LocalConcordanceIndex] = self.public_local_evaluations[split]
+                        fh.write(f"opt-out\t{public_local is None}\n")
                         aggregated: Optional[AggregatedConcordanceIndex] = evaluation
                         if aggregated is not None:
                             fh.write(f"mean c-index\t{aggregated.mean_cindex}\n")
