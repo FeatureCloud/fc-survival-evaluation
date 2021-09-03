@@ -77,5 +77,5 @@ class GlobalConcordanceIndexEvaluations(object):
     def calc(self) -> AggregatedConcordanceIndex:
         return AggregatedConcordanceIndex(
             mean_cindex=self.mean_cindex(),
-            weighted_cindex=self.weighted_cindex(),
+            weighted_cindex_concordant_pairs=self.weighted_cindex(),
         )
