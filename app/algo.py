@@ -59,8 +59,9 @@ class GlobalConcordanceIndexEvaluations(object):
         """
         return self.c_indices.mean()
 
-    def weighted_cindex(self) -> float:
+    def weighted_cindex_concordant_pairs(self) -> float:
         r"""Calculate the weighted concordance index.
+        Weighting is done by the number of concordant pairs of each client.
 
         .. math::
             C_{global\_weighted} = \frac{\sum_{k}^{n\_clients} C_k * CP_k}{\sum_{k}^{n\_clients} CP_k}
@@ -77,5 +78,5 @@ class GlobalConcordanceIndexEvaluations(object):
     def calc(self) -> AggregatedConcordanceIndex:
         return AggregatedConcordanceIndex(
             mean_cindex=self.mean_cindex(),
-            weighted_cindex_concordant_pairs=self.weighted_cindex(),
+            weighted_cindex_concordant_pairs=self.weighted_cindex_concordant_pairs(),
         )
