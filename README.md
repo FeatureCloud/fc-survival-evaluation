@@ -31,6 +31,8 @@ This app is compatible with CV.
 Use the config file to customize the evaluation. Just upload it together with your training data as `config.yml`
 ```yaml
 fc_survival_evaluation:
+  privacy:
+    min_concordant_pairs: 3  # minimum: 3; threshold of concordant pairs for participation
   input:
     y_test: "test.csv"
     y_pred: "pred.csv"  # could be the same as y_test if predictions were appended to test data
