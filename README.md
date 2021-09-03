@@ -10,8 +10,9 @@ This allows evaluating your trained models using the following metrics:
 - c-index (concordance index)
     - local c-index
     - local concordant pairs
-    - global mean c-index
-    - global weighted c-index
+    - global c-index equally weighted (mean)
+    - global c-index weighted by the number of samples at each client
+    - global c-index weighted by the number of concordant pairs at each client
 
 ## Input
 - test.csv containing the actual test dataset with an event and time column
