@@ -12,6 +12,7 @@ class Result:
 @dataclass
 class AggregatedConcordanceIndex(Result):
     mean_cindex: float
+    weighted_cindex_samples: float
     weighted_cindex_concordant_pairs: float
 
 
@@ -22,6 +23,7 @@ class Evaluation:
 @dataclass
 class LocalConcordanceIndex(Evaluation):
     cindex: float
+    num_samples: int
     num_concordant_pairs: int
 
 
@@ -32,6 +34,7 @@ def calculate_cindex_on_local_data(event_indicator, event_time, estimate, tied_t
                                                                                                      tied_tol=tied_tol)
     return LocalConcordanceIndex(
         cindex=cindex,
+        num_samples=len(event_indicator),
         num_concordant_pairs=concordant,
     )
 
@@ -39,9 +42,11 @@ def calculate_cindex_on_local_data(event_indicator, event_time, estimate, tied_t
 class GlobalConcordanceIndexEvaluations(object):
     def __init__(self, evaluations: List[LocalConcordanceIndex]):
         self.c_indices = np.zeros(len(evaluations))
+        self.num_samples = np.zeros(len(evaluations))
         self.concordant_pairs = np.zeros(len(evaluations))
         for i, evaluation in enumerate(evaluations):
             self.c_indices[i] = evaluation.cindex
+            self.num_samples[i] = evaluation.num_samples
             self.concordant_pairs[i] = evaluation.num_concordant_pairs
 
     def mean_cindex(self) -> float:
@@ -58,6 +63,15 @@ class GlobalConcordanceIndexEvaluations(object):
         :rtype: float
         """
         return self.c_indices.mean()
+
+    def weighted_cindex_samples(self) -> float:
+        r"""Calculate the weighted concordance index.
+        Weighting is done by the number of samples of each client.
+
+        :return: weighted concordance index
+        :rtype: float
+        """
+        return np.sum(self.c_indices * self.num_samples) / np.sum(self.num_samples)
 
     def weighted_cindex_concordant_pairs(self) -> float:
         r"""Calculate the weighted concordance index.
@@ -78,5 +92,6 @@ class GlobalConcordanceIndexEvaluations(object):
     def calc(self) -> AggregatedConcordanceIndex:
         return AggregatedConcordanceIndex(
             mean_cindex=self.mean_cindex(),
+            weighted_cindex_samples=self.weighted_cindex_samples(),
             weighted_cindex_concordant_pairs=self.weighted_cindex_concordant_pairs(),
         )

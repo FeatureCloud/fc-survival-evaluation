@@ -272,6 +272,7 @@ class AppLogic:
                         fh.write(f"concordant pairs on local data\t{self.local_evaluations[split].num_concordant_pairs}\n")
                         aggregated: AggregatedConcordanceIndex = evaluation
                         fh.write(f"mean c-index\t{aggregated.mean_cindex}\n")
+                        fh.write(f"sample weighted c-index\t{aggregated.weighted_cindex_samples}\n")
                         fh.write(f"concordant pairs weighted c-index\t{aggregated.weighted_cindex_concordant_pairs}\n")
 
                 state = state_shutdown
