@@ -268,12 +268,13 @@ class AppLogic:
                     output_path = os.path.join(split.replace("/input", "/output"), "scores.tab")
                     logging.debug(f"Write output for {split} to {output_path}")
                     with open(output_path, "w") as fh:
+                        fh.write(f"number of samples (local)\t{self.local_evaluations[split].num_samples}\n")
                         fh.write(f"c-index on local data\t{self.local_evaluations[split].cindex}\n")
                         fh.write(f"concordant pairs on local data\t{self.local_evaluations[split].num_concordant_pairs}\n")
                         aggregated: AggregatedConcordanceIndex = evaluation
                         fh.write(f"mean c-index\t{aggregated.mean_cindex}\n")
-                        fh.write(f"sample weighted c-index\t{aggregated.weighted_cindex_samples}\n")
-                        fh.write(f"concordant pairs weighted c-index\t{aggregated.weighted_cindex_concordant_pairs}\n")
+                        fh.write(f"c-index weighted by number of samples\t{aggregated.weighted_cindex_samples}\n")
+                        fh.write(f"c-index weighted by number of concordant pairs\t{aggregated.weighted_cindex_concordant_pairs}\n")
 
                 state = state_shutdown
 
