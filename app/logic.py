@@ -53,6 +53,8 @@ class AppLogic:
         self.y_test_filename = None
         self.y_pred_filename = None
 
+        self.objective = None
+
         self.sep = ","
         self.mode = None
         self.dir = "."
