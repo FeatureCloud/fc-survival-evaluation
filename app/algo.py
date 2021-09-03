@@ -12,7 +12,7 @@ class Result:
 @dataclass
 class AggregatedConcordanceIndex(Result):
     mean_cindex: float
-    weighted_cindex: float
+    weighted_cindex_concordant_pairs: float
 
 
 class Evaluation:
