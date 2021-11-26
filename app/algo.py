@@ -74,7 +74,7 @@ class GlobalConcordanceIndexEvaluations(object):
         return np.sum(self.c_indices * self.num_samples) / np.sum(self.num_samples)
 
     def weighted_cindex_concordant_pairs(self) -> float:
-        r"""Calculate the weighted concordance index.
+        r"""Calculate the weighted concordance index...
         Weighting is done by the number of concordant pairs of each client.
 
         .. math::
