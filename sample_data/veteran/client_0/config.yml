@@ -1,0 +1,17 @@
+fc_survival_evaluation:
+  privacy:
+    min_concordant_pairs: 25
+  input:
+    y_test: "test.csv"
+    y_pred: "pred.csv"
+  format:
+    sep: ","
+    label_survival_time: "time"
+    label_event: "status"
+    event_truth_value: 0  # optional, default=True; value of an entry in the event column when a event occurred
+    label_predicted_time: "predicted_tte"
+  parameters:
+    objective: regression
+  split:
+    mode: directory  # directory if cross validation was used before, else file
+    dir: cv  # data if cross validation app was used before, else .
