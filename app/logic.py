@@ -122,6 +122,7 @@ class AppLogic:
             self.actual[self.INPUT_DIR] = None
             self.predicted[self.INPUT_DIR] = None
 
+        os.makedirs(self.OUTPUT_DIR, exist_ok=True)
         for split in self.actual.keys():
             os.makedirs(split.replace("/input/", "/output/"), exist_ok=True)
         shutil.copyfile(self.INPUT_DIR + '/config.yml', self.OUTPUT_DIR + '/config.yml')
@@ -211,6 +212,8 @@ class AppLogic:
                 self.progress = f'local evaluation...'
                 self.local_evaluations: Dict[str, LocalConcordanceIndex] = dict.fromkeys(self.actual)
                 self.public_local_evaluations: Dict[str, Optional[LocalConcordanceIndex]] = dict.fromkeys(self.actual)
+
+                # calculate c-index for each split
                 for split in self.actual.keys():
                     event_indicator = self.actual[split]['Status']
                     event_time = self.actual[split]['Survival']
@@ -229,6 +232,23 @@ class AppLogic:
 
                 logging.debug(self.local_evaluations)
 
+                # calculate c-index over all splits
+                logging.debug('Calculate c-index over all splits')
+                actual = np.concatenate([self.actual[split] for split in self.actual.keys()])
+                predicted = np.concatenate([self.predicted[split] for split in self.predicted.keys()])
+
+                if self.objective == 'regression':
+                    predicted = -predicted
+
+                overall_cindex = calculate_cindex_on_local_data(event_indicator=actual['Status'], event_time=actual['Survival'], estimate=predicted)
+                if overall_cindex.num_concordant_pairs < self.min_concordant_pairs:
+                    logging.debug(f'Opt-out')
+                    overall_cindex = None
+
+                self.local_evaluations[self.INPUT_DIR] = overall_cindex
+                self.public_local_evaluations[self.INPUT_DIR] = overall_cindex
+
+                # sending data
                 data_to_send = jsonpickle.encode(self.public_local_evaluations)
 
                 if self.coordinator:
@@ -259,7 +279,7 @@ class AppLogic:
                             if evaluation is not None:
                                 local_results[split].append(evaluation)
 
-                    self.global_results = dict.fromkeys(self.actual)
+                    self.global_results = dict.fromkeys(local_results)
                     for split, evaluations in local_results.items():
                         aggregator = GlobalConcordanceIndexEvaluations(evaluations)
                         self.global_results[split] = aggregator.calc()
