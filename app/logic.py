@@ -119,8 +119,8 @@ class AppLogic:
             self.actual = dict.fromkeys([f.path for f in os.scandir(f'{self.INPUT_DIR}/{self.dir}') if f.is_dir()])
             self.predicted = dict.fromkeys(self.actual)
         else:
-            self.actual[self.INPUT_DIR] = None
-            self.predicted[self.INPUT_DIR] = None
+            self.actual[self.INPUT_DIR] = {}
+            self.predicted[self.INPUT_DIR] = {}
 
         os.makedirs(self.OUTPUT_DIR, exist_ok=True)
         for split in self.actual.keys():
