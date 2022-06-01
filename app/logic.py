@@ -105,7 +105,8 @@ class AppLogic:
             self.label_time_to_event = config["format"]["label_survival_time"]
             self.label_event = config["format"]["label_event"]
             self.label_pred_time_to_event = config["format"]["label_predicted_time"]
-            self.event_truth_value = config["format"].get("event_truth_value", True)  # default value
+            self.event_value = str(config["format"].get("event_value", "True"))  # default value
+            self.event_censored_value = str(config["format"].get("event_censored_value", "False"))  # default value
 
             self.objective = config["parameters"]["objective"]
             possible_objectives = ['ranking', 'regression']
@@ -137,12 +138,23 @@ class AppLogic:
             raise e
 
     @staticmethod
-    def event_value_to_truth_array(event: NDArray[Any], truth_value: Any) -> NDArray[Bool]:
-        if truth_value is True and event.dtype == np.dtype('bool'):  # nothing to do...
-            return event
-
+    def event_value_to_truth_array(event: NDArray[str], truth_value: str, censored_value: str) -> Tuple[NDArray[Bool], NDArray[Bool]]:
+        """
+        Return truth array given a value where the event is recorded and a value where the event is censored.
+        Other rows will be dropped.
+        :return: Event value array, array marking rows to keep
+        """
         truth_array = (event == truth_value)
-        return truth_array
+        censored_array = (event == censored_value)
+
+        # get rows where the value is event value or censored
+        has_known_value = truth_array | censored_array
+        n_to_be_dropped = (~has_known_value).sum()
+        # drop rows where value is unknown
+        if n_to_be_dropped > 0:
+            logging.warning(f"Dropping {n_to_be_dropped} rows due to unknown event value")
+        return truth_array[has_known_value], has_known_value
+
 
     def read_data_frame(self, path):
         logging.info(f"Read data file at {path}")
@@ -155,14 +167,16 @@ class AppLogic:
 
         event = self.get_column(X, self.label_event)
         logging.debug(f"event:\n{event}")
-        event_occurred = self.event_value_to_truth_array(event.to_numpy(), self.event_truth_value)
+        event_occurred, keep = self.event_value_to_truth_array(event.to_numpy(dtype=np.str), self.event_value, self.event_censored_value)
         logging.debug(f"event_occurred:\n{event_occurred}")
 
         time_to_event = self.get_column(X, self.label_time_to_event)
         logging.debug(f"time_to_event:\n{time_to_event}")
 
         X.drop([self.label_event, self.label_time_to_event], axis=1, inplace=True)
+        X = X[keep]
         logging.debug(f"features:\n{X}")
+
         y = np.zeros(X.shape[0], dtype=[('Status', '?'), ('Survival', '<f8')])  # TODO
         y['Status'] = event
         y['Survival'] = time_to_event
