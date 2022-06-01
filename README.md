@@ -40,7 +40,8 @@ fc_survival_evaluation:
     sep: ","
     label_survival_time: "tte"
     label_event: "event"
-    event_truth_value: True  # optional, default=True; value of an entry in the event column when a event occurred
+    event_value: 'True'  # optional, default='True'; value of an entry in the event column when an event occurred
+    event_censored_value: 'False'  # optional, default='False'; value of an entry in the event column when censored
     label_predicted_time: "predicted_tte"
   parameters:
     objective: regression  # can be regression or ranking
