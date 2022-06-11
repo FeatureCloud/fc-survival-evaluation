@@ -255,11 +255,11 @@ class AppLogic:
                     predicted = -predicted
 
                 overall_cindex = calculate_cindex_on_local_data(event_indicator=actual['Status'], event_time=actual['Survival'], estimate=predicted)
+                self.local_evaluations[self.INPUT_DIR] = overall_cindex
+
                 if overall_cindex.num_concordant_pairs < self.min_concordant_pairs:
                     logging.debug(f'Opt-out')
                     overall_cindex = None
-
-                self.local_evaluations[self.INPUT_DIR] = overall_cindex
                 self.public_local_evaluations[self.INPUT_DIR] = overall_cindex
 
                 # sending data
