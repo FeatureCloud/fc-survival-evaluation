@@ -319,7 +319,7 @@ class AppLogic:
                 for split, evaluation in self.global_results.items():
                     logging.debug(f"Write output for split {split}")
 
-                    local_scores_path = os.path.join(split.replace("/input", "/output"), "local_scores.tab")
+                    local_scores_path = os.path.join(split.replace("/input", "/output"), "local_scores.tsv")
                     with open(local_scores_path, "w") as fh:
                         local: LocalConcordanceIndex = self.local_evaluations[split]
                         fh.write(f"number of samples (local)\t{local.num_samples}\n")
@@ -328,7 +328,7 @@ class AppLogic:
                         public_local: Optional[LocalConcordanceIndex] = self.public_local_evaluations[split]
                         fh.write(f"opt-out\t{public_local is None}\n")
 
-                    global_score_path = os.path.join(split.replace("/input", "/output"), "global_scores.tab")
+                    global_score_path = os.path.join(split.replace("/input", "/output"), "global_scores.tsv")
                     with open(global_score_path, "w") as fh:
                         aggregated: Optional[AggregatedConcordanceIndex] = evaluation
                         if aggregated is not None:
