@@ -317,15 +317,19 @@ class AppLogic:
                 logging.debug(self.global_results)
 
                 for split, evaluation in self.global_results.items():
-                    output_path = os.path.join(split.replace("/input", "/output"), "scores.tab")
-                    logging.debug(f"Write output for {split} to {output_path}")
-                    with open(output_path, "w") as fh:
+                    logging.debug(f"Write output for split {split}")
+
+                    local_scores_path = os.path.join(split.replace("/input", "/output"), "local_scores.tab")
+                    with open(local_scores_path, "w") as fh:
                         local: LocalConcordanceIndex = self.local_evaluations[split]
                         fh.write(f"number of samples (local)\t{local.num_samples}\n")
                         fh.write(f"c-index on local data\t{local.cindex}\n")
                         fh.write(f"concordant pairs on local data\t{local.num_concordant_pairs}\n")
                         public_local: Optional[LocalConcordanceIndex] = self.public_local_evaluations[split]
                         fh.write(f"opt-out\t{public_local is None}\n")
+
+                    global_score_path = os.path.join(split.replace("/input", "/output"), "global_scores.tab")
+                    with open(global_score_path, "w") as fh:
                         aggregated: Optional[AggregatedConcordanceIndex] = evaluation
                         if aggregated is not None:
                             fh.write(f"mean c-index\t{aggregated.mean_cindex}\n")
