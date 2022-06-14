@@ -246,22 +246,6 @@ class AppLogic:
 
                 logging.debug(self.local_evaluations)
 
-                # calculate c-index over all splits
-                logging.debug('Calculate c-index over all splits')
-                actual = np.concatenate([self.actual[split] for split in self.actual.keys()])
-                predicted = np.concatenate([self.predicted[split] for split in self.predicted.keys()])
-
-                if self.objective == 'regression':
-                    predicted = -predicted
-
-                overall_cindex = calculate_cindex_on_local_data(event_indicator=actual['Status'], event_time=actual['Survival'], estimate=predicted)
-                if overall_cindex.num_concordant_pairs < self.min_concordant_pairs:
-                    logging.debug(f'Opt-out')
-                    overall_cindex = None
-
-                self.local_evaluations[self.INPUT_DIR] = overall_cindex
-                self.public_local_evaluations[self.INPUT_DIR] = overall_cindex
-
                 # sending data
                 data_to_send = jsonpickle.encode(self.public_local_evaluations)
 
@@ -293,11 +277,21 @@ class AppLogic:
                             if evaluation is not None:
                                 local_results[split].append(evaluation)
 
+                    # aggregate c-indices per split
                     self.global_results = dict.fromkeys(local_results)
                     for split, evaluations in local_results.items():
                         aggregator = GlobalConcordanceIndexEvaluations(evaluations)
                         self.global_results[split] = aggregator.calc()
 
+                    # aggregate c-indices over all splits when in directory mode
+                    if self.mode == "directory":
+                        all_cindices: List[LocalConcordanceIndex] = []
+                        for evaluations in local_results.values():
+                            all_cindices.extend(evaluations)
+                        aggregator = GlobalConcordanceIndexEvaluations(evaluations)
+                        self.global_results[self.INPUT_DIR] = aggregator.calc()
+
+                    # broadcast aggregated results
                     data_to_broadcast = jsonpickle.encode(self.global_results)
                     self.data_outgoing = data_to_broadcast
                     self.status_available = True
@@ -317,17 +311,22 @@ class AppLogic:
                 logging.debug(self.global_results)
 
                 for split, evaluation in self.global_results.items():
-                    output_path = os.path.join(split.replace("/input", "/output"), "scores.tab")
-                    logging.debug(f"Write output for {split} to {output_path}")
-                    with open(output_path, "w") as fh:
-                        local: LocalConcordanceIndex = self.local_evaluations[split]
-                        fh.write(f"number of samples (local)\t{local.num_samples}\n")
-                        fh.write(f"c-index on local data\t{local.cindex}\n")
-                        fh.write(f"concordant pairs on local data\t{local.num_concordant_pairs}\n")
-                        public_local: Optional[LocalConcordanceIndex] = self.public_local_evaluations[split]
-                        fh.write(f"opt-out\t{public_local is None}\n")
-                        aggregated: Optional[AggregatedConcordanceIndex] = evaluation
-                        if aggregated is not None:
+                    logging.debug(f"Write output for split {split}")
+
+                    local_scores_path = os.path.join(split.replace("/input", "/output"), "local_scores.tsv")
+                    local: LocalConcordanceIndex = self.local_evaluations.get(split)
+                    if local is not None:
+                        with open(local_scores_path, "w") as fh:
+                            fh.write(f"number of samples (local)\t{local.num_samples}\n")
+                            fh.write(f"c-index on local data\t{local.cindex}\n")
+                            fh.write(f"concordant pairs on local data\t{local.num_concordant_pairs}\n")
+                            public_local: Optional[LocalConcordanceIndex] = self.public_local_evaluations[split]
+                            fh.write(f"opt-out\t{public_local is None}\n")
+
+                    global_score_path = os.path.join(split.replace("/input", "/output"), "global_scores.tsv")
+                    aggregated: Optional[AggregatedConcordanceIndex] = evaluation
+                    if aggregated is not None:
+                        with open(global_score_path, "w") as fh:
                             fh.write(f"mean c-index\t{aggregated.mean_cindex}\n")
                             fh.write(f"c-index weighted by number of samples\t{aggregated.weighted_cindex_samples}\n")
                             fh.write(f"c-index weighted by number of concordant pairs\t{aggregated.weighted_cindex_concordant_pairs}\n")
